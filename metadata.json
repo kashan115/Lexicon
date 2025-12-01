@@ -1,0 +1,5 @@
+{
+  "name": "Lexicon Journal",
+  "description": "A distraction-free daily writing journal with AI-powered prompts, vocabulary building, and analysis. Supports Google Gemini and local Ollama LLMs.",
+  "requestFramePermissions": []
+}
