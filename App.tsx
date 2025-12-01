@@ -7,12 +7,17 @@ import {
   Sparkles, 
   BarChart2, 
   CheckCircle2, 
-  AlertCircle
+  Wand2,
+  Check,
+  Map,
+  Github
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { SettingsModal } from './components/SettingsModal';
-import { AppSettings, DailyContent, AnalysisResult } from './types';
-import { generateDailyContent, generateWritingPlan, analyzeWriting, isGeminiAvailable } from './services/llmService';
+import { RoadmapModal } from './components/RoadmapModal';
+import { BookRecommendation } from './components/BookRecommendation';
+import { AppSettings, DailyContent, AnalysisResult, CourseDay } from './types';
+import { generateDailyContent, generateWritingPlan, analyzeWriting, isGeminiAvailable, generateCompletion, fixGrammar } from './services/llmService';
 
 const DEFAULT_SETTINGS: AppSettings = {
   provider: isGeminiAvailable() ? 'gemini' : 'ollama',
@@ -39,7 +44,12 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
   });
   const [dailyContent, setDailyContent] = useState<DailyContent | null>(null);
+  
+  // Modals
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isRoadmapOpen, setIsRoadmapOpen] = useState(false);
+
+  // Features
   const [plan, setPlan] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
   
@@ -47,19 +57,29 @@ const App: React.FC = () => {
   const [isLoadingTopic, setIsLoadingTopic] = useState(false);
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
+  const [isFixing, setIsFixing] = useState(false);
+
+  // Progress
+  const [completedDays, setCompletedDays] = useState<number[]>(() => {
+    const saved = localStorage.getItem('lexicon_completed_days');
+    return saved ? JSON.parse(saved) : [];
+  });
 
   // Refs for auto-resize
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load Content
+  // --- INITIAL LOAD ---
   useEffect(() => {
     const loadContent = async () => {
       // Check if we have today's content in storage
       const today = new Date().toISOString().split('T')[0];
       const savedContent = localStorage.getItem(`lexicon_content_${today}`);
       
+      // If we have saved content and it's not a course day override from previous session
       if (savedContent) {
-        setDailyContent(JSON.parse(savedContent));
+        const parsed = JSON.parse(savedContent);
+        setDailyContent(parsed);
       } else {
         // Generate new content
         setIsLoadingTopic(true);
@@ -78,14 +98,54 @@ const App: React.FC = () => {
 
     loadContent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run once on mount, we don't re-run if settings change automatically to avoid trashing daily topic
+  }, []); 
 
-  // Save Settings
+  // --- AUTO SAVE & LOAD DRAFT ---
+  // When dailyContent changes (i.e. user switches topic), load the saved draft for that topic
+  useEffect(() => {
+    if (dailyContent) {
+      // Create a unique key for this content. 
+      // For course days: "course_1"
+      // For daily randoms: "daily_2024-05-20"
+      const key = dailyContent.isCourse 
+        ? `lexicon_draft_course_${dailyContent.courseDay}` 
+        : `lexicon_draft_daily_${dailyContent.date}`;
+
+      const savedDraft = localStorage.getItem(key);
+      if (savedDraft) {
+        setText(savedDraft);
+      } else {
+        setText(''); // Clear text if no draft found for this specific topic
+      }
+      
+      // Clear analysis/plan when switching topics
+      setAnalysis(null);
+      setPlan(null);
+    }
+  }, [dailyContent?.date, dailyContent?.isCourse, dailyContent?.courseDay]);
+
+  // Save text to local storage whenever it changes
+  useEffect(() => {
+    if (dailyContent && text !== '') {
+      const key = dailyContent.isCourse 
+        ? `lexicon_draft_course_${dailyContent.courseDay}` 
+        : `lexicon_draft_daily_${dailyContent.date}`;
+      localStorage.setItem(key, text);
+    }
+  }, [text, dailyContent]);
+
+
+  // --- PERSIST SETTINGS ---
   useEffect(() => {
     localStorage.setItem('lexicon_settings', JSON.stringify(settings));
   }, [settings]);
 
-  // Auto-resize textarea
+  // --- PERSIST PROGRESS ---
+  useEffect(() => {
+    localStorage.setItem('lexicon_completed_days', JSON.stringify(completedDays));
+  }, [completedDays]);
+
+  // --- AUTO RESIZE EDITOR ---
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -95,6 +155,15 @@ const App: React.FC = () => {
 
   const wordCount = text.trim().split(/\s+/).filter(w => w.length > 0).length;
   const progress = Math.min((wordCount / settings.targetWords) * 100, 100);
+
+  // Mark course day as complete if word count reached
+  useEffect(() => {
+    if (dailyContent?.isCourse && dailyContent.courseDay && wordCount >= settings.targetWords) {
+      if (!completedDays.includes(dailyContent.courseDay)) {
+        setCompletedDays(prev => [...prev, dailyContent.courseDay!]);
+      }
+    }
+  }, [wordCount, dailyContent, settings.targetWords, completedDays]);
 
   const handleGeneratePlan = async () => {
     if (!dailyContent) return;
@@ -127,13 +196,9 @@ const App: React.FC = () => {
     try {
        const newContent = await generateDailyContent(settings);
        setDailyContent(newContent);
-       // Update today's cache
        const today = new Date().toISOString().split('T')[0];
        localStorage.setItem(`lexicon_content_${today}`, JSON.stringify(newContent));
-       // Reset states
-       setPlan(null);
-       setAnalysis(null);
-       setText('');
+       // Text and Plan clearing is handled by the useEffect watching dailyContent
     } catch (e) {
       console.error(e);
     } finally {
@@ -141,26 +206,79 @@ const App: React.FC = () => {
     }
   };
 
+  const handleSelectCourseDay = (day: CourseDay) => {
+    const courseContent: DailyContent = {
+      date: `Day ${day.day}`,
+      topic: day.title,
+      description: day.prompt,
+      vocabulary: day.vocab,
+      isCourse: true,
+      courseDay: day.day
+    };
+    setDailyContent(courseContent);
+  };
+
+  const handleAutocomplete = async () => {
+    if (!dailyContent) return;
+    setIsCompleting(true);
+    try {
+      const completion = await generateCompletion(settings, text, dailyContent.topic);
+      if (completion) {
+        const separator = text.length > 0 && !text.endsWith(' ') ? ' ' : '';
+        setText(prev => prev + separator + completion);
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsCompleting(false);
+      textareaRef.current?.focus();
+    }
+  };
+
+  const handleFixGrammar = async () => {
+    if (!text || text.length < 10) return;
+    setIsFixing(true);
+    try {
+      const fixed = await fixGrammar(settings, text);
+      if (fixed) {
+        setText(fixed);
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsFixing(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-paper text-ink font-sans selection:bg-orange-100 selection:text-orange-900 pb-20">
+    <div className="min-h-screen bg-paper text-ink font-sans selection:bg-orange-100 selection:text-orange-900 pb-20 flex flex-col">
       
       {/* Header */}
       <header className="sticky top-0 z-30 bg-paper/80 backdrop-blur-md border-b border-stone-200">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-accent rounded-lg flex items-center justify-center text-white">
               <PenTool size={18} />
             </div>
-            <h1 className="font-serif font-bold text-xl tracking-tight">Lexicon</h1>
+            <h1 className="font-serif font-bold text-xl tracking-tight hidden sm:block">Lexicon</h1>
           </div>
           
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-4">
+            
+            <button
+               onClick={() => setIsRoadmapOpen(true)}
+               className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white border border-stone-200 text-stone-600 hover:border-accent hover:text-accent transition-colors text-sm font-medium shadow-sm"
+            >
+              <Map size={16} />
+              <span className="hidden sm:inline">30-Day Plan</span>
+            </button>
+
              {/* Word Count Pill */}
             <div className={`hidden sm:flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium transition-colors ${
               wordCount >= settings.targetWords ? 'bg-green-100 text-green-700' : 'bg-stone-100 text-stone-600'
             }`}>
               {wordCount >= settings.targetWords ? <CheckCircle2 size={16}/> : <div className="w-4 h-4 rounded-full border-2 border-stone-300 border-t-stone-500 animate-spin opacity-0" />}
-              <span>{wordCount} / {settings.targetWords} words</span>
+              <span>{wordCount} / {settings.targetWords}</span>
             </div>
 
             <button 
@@ -173,7 +291,7 @@ const App: React.FC = () => {
           </div>
         </div>
         
-        {/* Progress Bar (Mobile/Desktop) */}
+        {/* Progress Bar */}
         <div className="h-1 w-full bg-stone-100">
           <div 
             className="h-full bg-accent transition-all duration-500 ease-out" 
@@ -182,32 +300,38 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <main className="flex-grow max-w-6xl mx-auto px-4 sm:px-6 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8 w-full">
         
         {/* Left Sidebar / Top Section: Topic & Tools */}
         <div className="lg:col-span-4 space-y-6">
           
-          {/* Date */}
-          <div className="text-stone-400 text-sm font-medium uppercase tracking-wider">
-            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+          {/* Date / Course Label */}
+          <div className="flex justify-between items-center text-stone-400 text-sm font-medium uppercase tracking-wider">
+             <span>{dailyContent?.isCourse ? `Course Day ${dailyContent.courseDay}` : new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</span>
+             {dailyContent?.isCourse && completedDays.includes(dailyContent.courseDay!) && (
+                <span className="text-green-600 flex items-center gap-1"><Check size={14}/> Done</span>
+             )}
           </div>
 
           {/* Topic Card */}
           <div className="bg-white rounded-xl shadow-sm border border-stone-100 p-6 relative overflow-hidden group">
-            <div className="absolute top-0 left-0 w-1 h-full bg-accent" />
+            <div className={`absolute top-0 left-0 w-1 h-full ${dailyContent?.isCourse ? 'bg-blue-500' : 'bg-accent'}`} />
             
             <div className="flex justify-between items-start mb-3">
-              <span className="text-xs font-bold text-accent uppercase tracking-wider">Today's Prompt</span>
-              <button onClick={refreshTopic} className="text-stone-300 hover:text-accent transition-colors" title="New Topic">
-                <RefreshCw size={14} className={isLoadingTopic ? "animate-spin" : ""} />
-              </button>
+              <span className={`text-xs font-bold uppercase tracking-wider ${dailyContent?.isCourse ? 'text-blue-500' : 'text-accent'}`}>
+                {dailyContent?.isCourse ? 'Writing Challenge' : "Today's Prompt"}
+              </span>
+              {!dailyContent?.isCourse && (
+                <button onClick={refreshTopic} className="text-stone-300 hover:text-accent transition-colors" title="New Topic">
+                  <RefreshCw size={14} className={isLoadingTopic ? "animate-spin" : ""} />
+                </button>
+              )}
             </div>
             
             {isLoadingTopic ? (
                <div className="animate-pulse space-y-3">
                  <div className="h-6 bg-stone-100 rounded w-3/4"></div>
                  <div className="h-4 bg-stone-100 rounded w-full"></div>
-                 <div className="h-4 bg-stone-100 rounded w-5/6"></div>
                </div>
             ) : dailyContent ? (
               <>
@@ -219,27 +343,31 @@ const App: React.FC = () => {
                 </p>
 
                 {/* Vocabulary */}
-                <div className="space-y-3 pt-4 border-t border-stone-100">
-                  <div className="flex items-center gap-2 text-stone-500 mb-2">
-                    <BookOpen size={14} />
-                    <span className="text-xs font-semibold uppercase">Vocabulary</span>
-                  </div>
-                  {dailyContent.vocabulary.map((vocab, idx) => (
-                    <div key={idx} className="bg-stone-50 p-3 rounded-lg border border-stone-100 hover:border-accent/20 transition-colors">
-                      <div className="flex justify-between items-baseline mb-1">
-                        <span className="font-bold text-ink">{vocab.word}</span>
-                        <span className="text-xs text-stone-400">Word of the Day</span>
-                      </div>
-                      <p className="text-xs text-stone-600 italic mb-1">{vocab.definition}</p>
-                      <p className="text-xs text-stone-500">"{vocab.example}"</p>
+                {dailyContent.vocabulary.length > 0 && (
+                  <div className="space-y-3 pt-4 border-t border-stone-100">
+                    <div className="flex items-center gap-2 text-stone-500 mb-2">
+                      <BookOpen size={14} />
+                      <span className="text-xs font-semibold uppercase">Vocabulary</span>
                     </div>
-                  ))}
-                </div>
+                    {dailyContent.vocabulary.map((vocab, idx) => (
+                      <div key={idx} className="bg-stone-50 p-3 rounded-lg border border-stone-100 hover:border-accent/20 transition-colors">
+                        <div className="flex justify-between items-baseline mb-1">
+                          <span className="font-bold text-ink">{vocab.word}</span>
+                        </div>
+                        <p className="text-xs text-stone-600 italic mb-1">{vocab.definition}</p>
+                        <p className="text-xs text-stone-500">"{vocab.example}"</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             ) : (
-               <div className="text-red-500 text-sm">Failed to load content. Check your API settings.</div>
+               <div className="text-red-500 text-sm">Failed to load content.</div>
             )}
           </div>
+
+          {/* Book Recommendation */}
+          <BookRecommendation />
 
           {/* Action Tools */}
           <div className="space-y-3">
@@ -291,7 +419,7 @@ const App: React.FC = () => {
         {/* Right Section: Editor */}
         <div className="lg:col-span-8 flex flex-col gap-6">
           
-          {/* Plan View (Accordion-style insert) */}
+          {/* Plan View */}
           {plan && (
             <div className="bg-orange-50/50 rounded-xl p-6 border border-orange-100 text-stone-700 animate-in fade-in duration-500">
               <div className="flex justify-between items-center mb-4">
@@ -305,23 +433,51 @@ const App: React.FC = () => {
           )}
 
           {/* Main Editor */}
-          <div className="relative min-h-[60vh] bg-white rounded-xl shadow-sm border border-stone-100 p-8 sm:p-10 cursor-text group focus-within:ring-2 focus-within:ring-accent/10 transition-shadow" onClick={() => textareaRef.current?.focus()}>
+          <div className="relative min-h-[70vh] flex flex-col bg-white rounded-xl shadow-sm border border-stone-100 focus-within:ring-2 focus-within:ring-accent/10 transition-shadow">
             
-            {!text && (
-              <div className="absolute top-10 left-10 right-10 pointer-events-none text-stone-300 font-serif text-lg italic select-none">
-                Start writing here... Let your thoughts flow...
-              </div>
-            )}
+            {/* AI Assistant Toolbar */}
+            <div className="flex items-center justify-between px-4 py-2 border-b border-stone-50 bg-stone-50/50 rounded-t-xl">
+               <span className="text-xs font-medium text-stone-400 uppercase tracking-wide">Editor</span>
+               <div className="flex gap-2">
+                  <button 
+                    onClick={handleAutocomplete}
+                    disabled={isCompleting}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-600 bg-white border border-stone-200 rounded-lg hover:border-purple-300 hover:text-purple-600 transition-colors disabled:opacity-50"
+                    title="Let AI write the next sentence"
+                  >
+                    {isCompleting ? <RefreshCw size={12} className="animate-spin"/> : <Wand2 size={12} />}
+                    Auto-Complete
+                  </button>
+                  <button 
+                    onClick={handleFixGrammar}
+                    disabled={isFixing || !text}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-600 bg-white border border-stone-200 rounded-lg hover:border-green-300 hover:text-green-600 transition-colors disabled:opacity-50"
+                    title="Fix spelling and grammar"
+                  >
+                    {isFixing ? <RefreshCw size={12} className="animate-spin"/> : <Check size={12} />}
+                    Fix Grammar
+                  </button>
+               </div>
+            </div>
 
-            <textarea
-              ref={textareaRef}
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              className="w-full bg-transparent resize-none outline-none border-none font-serif text-lg sm:text-xl leading-relaxed text-ink placeholder-transparent"
-              spellCheck={false}
-              placeholder="Start writing..."
-              style={{ minHeight: '60vh' }}
-            />
+            <div className="relative flex-grow p-8 sm:p-10 cursor-text" onClick={() => textareaRef.current?.focus()}>
+              {!text && (
+                <div className="absolute top-10 left-10 right-10 pointer-events-none text-stone-300 font-serif text-lg italic select-none">
+                  {dailyContent?.isCourse 
+                     ? "Start your daily exercise here..." 
+                     : "Start writing here... Let your thoughts flow..."}
+                </div>
+              )}
+
+              <textarea
+                ref={textareaRef}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                className="w-full h-full bg-transparent resize-none outline-none border-none font-serif text-lg sm:text-xl leading-relaxed text-ink placeholder-transparent"
+                spellCheck={false}
+                placeholder="Start writing..."
+              />
+            </div>
           </div>
           
           {/* Footer Stats for mobile */}
@@ -333,17 +489,38 @@ const App: React.FC = () => {
         </div>
       </main>
 
+      {/* Footer */}
+      <footer className="border-t border-stone-200 py-6 mt-12 bg-white">
+        <div className="max-w-6xl mx-auto px-4 text-center">
+          <p className="flex items-center justify-center gap-2 text-stone-500 text-sm mb-2">
+            <Github size={16} />
+            <span>Open Source (MIT License). Contribute on GitHub.</span>
+          </p>
+          <p className="text-stone-400 text-xs">
+            Data is stored locally on your device.
+          </p>
+        </div>
+      </footer>
+
       <SettingsModal 
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)} 
         settings={settings}
         onSave={setSettings}
       />
+
+      <RoadmapModal
+        isOpen={isRoadmapOpen}
+        onClose={() => setIsRoadmapOpen(false)}
+        completedDays={completedDays}
+        currentDay={dailyContent?.courseDay || 0}
+        onSelectDay={handleSelectCourseDay}
+      />
     </div>
   );
 };
 
-// Simple icon wrapper because Lucide doesn't export 'XIcon' usually, it exports 'X'
+// Simple icon wrapper
 const XIcon = ({ size }: { size: number }) => (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 6 18"/><path d="m6 6 18 18"/></svg>
 )

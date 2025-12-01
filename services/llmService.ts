@@ -136,6 +136,58 @@ export const analyzeWriting = async (settings: AppSettings, text: string, topic:
   };
 };
 
+/**
+ * Autocompletes the next 1-2 sentences.
+ */
+export const generateCompletion = async (settings: AppSettings, currentText: string, topic: string): Promise<string> => {
+  // We only send the last 1000 characters to keep context relevant and fast
+  const context = currentText.slice(-1000);
+  const prompt = `
+    You are a writing assistant. Continue the following text naturally, keeping the same tone and style.
+    The topic is: "${topic}".
+    
+    Current text: "...${context}"
+    
+    Generate only the next 1-2 sentences to help the writer continue. Do not repeat the existing text.
+  `;
+
+  if (settings.provider === 'gemini' && isGeminiAvailable()) {
+    const response = await geminiClient!.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+    return response.text.trim();
+  } else if (settings.provider === 'ollama') {
+    return fetchOllamaText(settings, prompt);
+  }
+  return "";
+};
+
+/**
+ * Fixes grammar and spelling for the provided text.
+ */
+export const fixGrammar = async (settings: AppSettings, text: string): Promise<string> => {
+  const prompt = `
+    Act as a professional editor. Correct the grammar, spelling, and punctuation of the following text.
+    Do not change the style, tone, or meaning. Only fix errors.
+    Return ONLY the corrected text.
+    
+    Text to fix:
+    "${text}"
+  `;
+
+  if (settings.provider === 'gemini' && isGeminiAvailable()) {
+    const response = await geminiClient!.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+    return response.text.trim();
+  } else if (settings.provider === 'ollama') {
+    return fetchOllamaText(settings, prompt);
+  }
+  return text;
+};
+
 // --- Ollama Helpers ---
 
 async function fetchOllamaText(settings: AppSettings, prompt: string): Promise<string> {
