@@ -82,6 +82,9 @@ export const SettingsModal: React.FC<Props> = ({ isOpen, onClose, settings, onSa
                   placeholder="http://localhost:11434"
                   className="w-full p-2 rounded-lg border border-gray-300 focus:border-accent focus:ring-1 focus:ring-accent outline-none font-mono text-sm"
                 />
+                <p className="text-[10px] text-gray-500 mt-1">
+                  <strong>iPad/Mobile Users:</strong> Use your PC's IP address (e.g., <code>http://192.168.1.5:11434</code>) instead of localhost.
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Model Name</label>

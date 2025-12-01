@@ -2,8 +2,20 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    
     <title>Lexicon Journal</title>
+    
+    <!-- PWA / iOS Meta Tags -->
+    <link rel="manifest" href="./manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Lexicon">
+    <meta name="theme-color" content="#fdfbf7">
+    
+    <!-- Using a generic pen icon for apple touch icon placeholder -->
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2541/2541991.png">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
     <script>
@@ -27,6 +39,8 @@
       body {
         background-color: #fdfbf7;
         color: #2d2a2e;
+        /* Prevent bounce scroll on iOS */
+        overscroll-behavior-y: none;
       }
       /* Custom scrollbar for a cleaner look */
       ::-webkit-scrollbar {
@@ -58,5 +72,14 @@
 </head>
   <body>
     <div id="root"></div>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('SW registered'))
+            .catch(err => console.log('SW registration failed', err));
+        });
+      }
+    </script>
   </body>
 </html>

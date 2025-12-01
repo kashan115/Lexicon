@@ -1,0 +1,21 @@
+{
+  "name": "Lexicon Journal",
+  "short_name": "Lexicon",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#fdfbf7",
+  "theme_color": "#fdfbf7",
+  "description": "A distraction-free daily writing journal.",
+  "icons": [
+    {
+      "src": "https://cdn.glitch.global/c0e98030-9759-4700-be87-57896443831b/lexicon-192.png?v=1",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn.glitch.global/c0e98030-9759-4700-be87-57896443831b/lexicon-512.png?v=1",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
